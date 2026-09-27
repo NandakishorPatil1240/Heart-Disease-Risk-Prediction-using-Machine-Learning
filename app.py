@@ -1,208 +1,535 @@
-import streamlit as st
-import pandas as pd
 import joblib
+import pandas as pd
 
-# ---------------- PAGE CONFIG ---------------- #
-st.set_page_config(
-    page_title="Heart Disease Predictor",
-    page_icon="❤️",
-    layout="wide",
-    initial_sidebar_state="expanded"
+from datetime import datetime
+
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+
+from sqlalchemy import (
+    create_engine,
+    Column,
+    Integer,
+    String,
+    Float,
+    DateTime
 )
 
-# ---------------- CUSTOM CSS ---------------- #
-st.markdown("""
-<style>
+from sqlalchemy.orm import declarative_base, sessionmaker
 
-.main{
-    background-color:#f4f8fb;
-}
 
-.title{
-    font-size:42px;
-    font-weight:bold;
-    color:#d90429;
-    text-align:center;
-}
+# ============================================================
+# 1. INITIALIZE FASTAPI
+# ============================================================
 
-.subtitle{
-    font-size:20px;
-    color:gray;
-    text-align:center;
-    margin-bottom:30px;
-}
-
-.stButton>button{
-    width:100%;
-    background:linear-gradient(90deg,#ff416c,#ff4b2b);
-    color:white;
-    font-size:20px;
-    border-radius:12px;
-    height:55px;
-    border:none;
-}
-
-.stButton>button:hover{
-    background:linear-gradient(90deg,#ff4b2b,#ff416c);
-}
-
-.card{
-    padding:20px;
-    border-radius:15px;
-    background:white;
-    box-shadow:0px 5px 15px rgba(0,0,0,0.2);
-}
-
-</style>
-""", unsafe_allow_html=True)
-
-# ---------------- LOAD MODEL ---------------- #
-model = joblib.load("KNN_heart.pkl")
-scaler = joblib.load("scaler.pkl")
-expected_columns = joblib.load("columns.pkl")
-
-# ---------------- HEADER ---------------- #
-st.markdown("<div class='title'>❤️ Heart Disease Prediction System</div>", unsafe_allow_html=True)
-
-st.markdown("<div class='subtitle'>AI Powered Heart Disease Risk Predictor</div>", unsafe_allow_html=True)
-
-# ---------------- SIDEBAR ---------------- #
-st.sidebar.image("https://cdn-icons-png.flaticon.com/512/833/833472.png", width=120)
-st.sidebar.header("Patient Information")
-
-age = st.sidebar.slider("Age",18,100,40)
-
-sex = st.sidebar.selectbox(
-    "Gender",
-    ["M","F"]
+app = FastAPI(
+    title="Heart Disease Prediction API",
+    version="1.0.0"
 )
 
-chest_pain = st.sidebar.selectbox(
-    "Chest Pain Type",
-    ["ATA","NAP","TA","ASY"]
+
+# ============================================================
+# 2. DATABASE CONFIGURATION
+# ============================================================
+
+DATABASE_URL = "sqlite:///./heart_disease.db"
+
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={"check_same_thread": False}
 )
 
-resting_bp = st.sidebar.number_input(
-    "Resting BP",
-    80,200,120
+SessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=engine
 )
 
-cholesterol = st.sidebar.number_input(
-    "Cholesterol",
-    100,600,200
-)
+Base = declarative_base()
 
-fasting_bs = st.sidebar.selectbox(
-    "Fasting Blood Sugar",
-    [0,1]
-)
 
-resting_ecg = st.sidebar.selectbox(
-    "Resting ECG",
-    ["Normal","ST","LVH"]
-)
+# ============================================================
+# 3. DATABASE TABLE
+# ============================================================
 
-max_hr = st.sidebar.slider(
-    "Maximum Heart Rate",
-    60,220,150
-)
+class PredictionHistory(Base):
 
-exercise_angina = st.sidebar.selectbox(
-    "Exercise Angina",
-    ["Y","N"]
-)
+    __tablename__ = "prediction_history"
 
-oldpeak = st.sidebar.slider(
-    "OldPeak",
-    0.0,6.0,1.0
-)
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True
+    )
 
-st_slope = st.sidebar.selectbox(
-    "ST Slope",
-    ["Up","Flat","Down"]
-)
+    age = Column(Integer)
 
-# ---------------- DISPLAY INPUTS ---------------- #
-col1,col2,col3 = st.columns(3)
+    sex = Column(String)
 
-with col1:
-    st.metric("Age",age)
-    st.metric("Blood Pressure",resting_bp)
+    chest_pain_type = Column(String)
 
-with col2:
-    st.metric("Cholesterol",cholesterol)
-    st.metric("Max HR",max_hr)
+    resting_bp = Column(Float)
 
-with col3:
-    st.metric("OldPeak",oldpeak)
-    st.metric("Fasting BS",fasting_bs)
+    cholesterol = Column(Float)
 
-st.divider()
+    fasting_bs = Column(Integer)
 
-# ---------------- PREDICTION ---------------- #
-if st.button("❤️ Predict Heart Disease"):
+    resting_ecg = Column(String)
 
-    raw_input = {
-        'Age': age,
-        'RestingBP': resting_bp,
-        'Cholesterol': cholesterol,
-        'FastingBS': fasting_bs,
-        'MaxHR': max_hr,
-        'Oldpeak': oldpeak,
-        'Sex_' + sex: 1,
-        'ChestPainType_' + chest_pain: 1,
-        'RestingECG_' + resting_ecg: 1,
-        'ExerciseAngina_' + exercise_angina: 1,
-        'ST_Slope_' + st_slope: 1
+    max_hr = Column(Integer)
+
+    exercise_angina = Column(String)
+
+    oldpeak = Column(Float)
+
+    st_slope = Column(String)
+
+    prediction = Column(Integer)
+
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow
+    )
+
+
+# Create database and table automatically
+Base.metadata.create_all(bind=engine)
+
+
+# ============================================================
+# 4. LOAD ML MODEL
+# ============================================================
+
+try:
+
+    model = joblib.load("KNN_heart.pkl")
+
+    scaler = joblib.load("scaler.pkl")
+
+    expected_columns = joblib.load("columns.pkl")
+
+    print(
+        "SUCCESS: All model files loaded correctly with Joblib!"
+    )
+
+except Exception as e:
+
+    print(
+        f"Error loading model files: {e}"
+    )
+
+
+# ============================================================
+# 5. PYDANTIC INPUT SCHEMA
+# ============================================================
+
+class PatientData(BaseModel):
+
+    Age: int
+
+    RestingBP: float
+
+    Cholesterol: float
+
+    FastingBS: int
+
+    MaxHR: int
+
+    Oldpeak: float
+
+    Sex: str
+
+    ChestPainType: str
+
+    RestingECG: str
+
+    ExerciseAngina: str
+
+    ST_Slope: str
+
+
+# ============================================================
+# 6. HOME API
+# ============================================================
+
+@app.get("/")
+def home():
+
+    return {
+        "message": "Heart Disease Prediction API is running!"
     }
 
-    input_df = pd.DataFrame([raw_input])
 
-    for col in expected_columns:
-        if col not in input_df.columns:
-            input_df[col]=0
+# ============================================================
+# 7. HEALTH CHECK
+# ============================================================
 
-    input_df=input_df[expected_columns]
+@app.get("/health")
+def health_check():
 
-    scaled_input=scaler.transform(input_df)
+    try:
 
-    prediction=model.predict(scaled_input)[0]
+        db = SessionLocal()
 
-    st.divider()
+        db.execute(
+            __import__("sqlalchemy").text(
+                "SELECT 1"
+            )
+        )
 
-    if prediction==1:
+        db.close()
 
-        st.error("⚠️ High Risk of Heart Disease")
+        return {
+            "status": "healthy",
+            "api": "running",
+            "database": "connected",
+            "model": "loaded"
+        }
 
-        st.progress(90)
+    except Exception as e:
 
-        st.markdown("""
-        ### Recommendation
+        return {
+            "status": "error",
+            "database": "not connected",
+            "error": str(e)
+        }
 
-        - Visit a Cardiologist
-        - Maintain Healthy Diet
-        - Exercise Daily
-        - Stop Smoking
-        - Monitor Blood Pressure
-        - Reduce Cholesterol
-        """)
 
-    else:
+# ============================================================
+# 8. PREDICTION ENDPOINT
+# ============================================================
 
-        st.success("✅ Low Risk of Heart Disease")
+@app.post("/predict")
+def predict_heart_disease(
+    patient: PatientData
+):
 
-        st.progress(20)
+    db = None
 
-        st.balloons()
+    try:
 
-        st.markdown("""
-        ### Recommendation
+        # ----------------------------------------------------
+        # Convert input to dictionary
+        # ----------------------------------------------------
 
-        ✔ Continue Healthy Lifestyle
+        data = patient.dict()
 
-        ✔ Regular Exercise
 
-        ✔ Healthy Food
+        # ----------------------------------------------------
+        # Initialize expected encoded columns
+        # ----------------------------------------------------
 
-        ✔ Routine Health Checkup
-        """)
+        encoded_data = {
+            col: 0
+            for col in expected_columns
+        }
+
+
+        # ----------------------------------------------------
+        # Numerical features
+        # ----------------------------------------------------
+
+        encoded_data["Age"] = data["Age"]
+
+        encoded_data["RestingBP"] = data["RestingBP"]
+
+        encoded_data["Cholesterol"] = data["Cholesterol"]
+
+        encoded_data["FastingBS"] = data["FastingBS"]
+
+        encoded_data["MaxHR"] = data["MaxHR"]
+
+        encoded_data["Oldpeak"] = data["Oldpeak"]
+
+
+        # ----------------------------------------------------
+        # Categorical One-Hot Encoding
+        # ----------------------------------------------------
+
+        sex_column = "Sex_" + data["Sex"]
+
+        if sex_column in encoded_data:
+
+            encoded_data[sex_column] = 1
+
+
+        chest_pain_column = (
+            "ChestPainType_"
+            + data["ChestPainType"]
+        )
+
+        if chest_pain_column in encoded_data:
+
+            encoded_data[chest_pain_column] = 1
+
+
+        ecg_column = (
+            "RestingECG_"
+            + data["RestingECG"]
+        )
+
+        if ecg_column in encoded_data:
+
+            encoded_data[ecg_column] = 1
+
+
+        angina_column = (
+            "ExerciseAngina_"
+            + data["ExerciseAngina"]
+        )
+
+        if angina_column in encoded_data:
+
+            encoded_data[angina_column] = 1
+
+
+        slope_column = (
+            "ST_Slope_"
+            + data["ST_Slope"]
+        )
+
+        if slope_column in encoded_data:
+
+            encoded_data[slope_column] = 1
+
+
+        # ----------------------------------------------------
+        # Create DataFrame
+        # ----------------------------------------------------
+
+        df_input = pd.DataFrame(
+            [encoded_data]
+        )[expected_columns]
+
+
+        # ----------------------------------------------------
+        # Scale input
+        # ----------------------------------------------------
+
+        scaled_input = scaler.transform(
+            df_input
+        )
+
+
+        # ----------------------------------------------------
+        # ML Prediction
+        # ----------------------------------------------------
+
+        prediction = model.predict(
+            scaled_input
+        )
+
+        prediction_value = int(
+            prediction[0]
+        )
+
+
+        # ====================================================
+        # SAVE PREDICTION TO DATABASE
+        # ====================================================
+
+        db = SessionLocal()
+
+
+        new_prediction = PredictionHistory(
+
+            age=data["Age"],
+
+            sex=data["Sex"],
+
+            chest_pain_type=data[
+                "ChestPainType"
+            ],
+
+            resting_bp=data[
+                "RestingBP"
+            ],
+
+            cholesterol=data[
+                "Cholesterol"
+            ],
+
+            fasting_bs=data[
+                "FastingBS"
+            ],
+
+            resting_ecg=data[
+                "RestingECG"
+            ],
+
+            max_hr=data[
+                "MaxHR"
+            ],
+
+            exercise_angina=data[
+                "ExerciseAngina"
+            ],
+
+            oldpeak=data[
+                "Oldpeak"
+            ],
+
+            st_slope=data[
+                "ST_Slope"
+            ],
+
+            prediction=prediction_value,
+
+            created_at=datetime.utcnow()
+        )
+
+
+        db.add(
+            new_prediction
+        )
+
+        db.commit()
+
+        db.refresh(
+            new_prediction
+        )
+
+
+        # ----------------------------------------------------
+        # Return prediction
+        # ----------------------------------------------------
+
+        return {
+
+            "status": "success",
+
+            "prediction": prediction_value,
+
+            "message": (
+                "Prediction generated and "
+                "saved successfully."
+            ),
+
+            "record_id": new_prediction.id
+        }
+
+
+    except Exception as e:
+
+        if db:
+
+            db.rollback()
+
+        raise HTTPException(
+
+            status_code=400,
+
+            detail=(
+                "Prediction error occurred: "
+                + str(e)
+            )
+        )
+
+
+    finally:
+
+        if db:
+
+            db.close()
+
+
+# ============================================================
+# 9. GET PREDICTION HISTORY
+# ============================================================
+
+@app.get("/history")
+def get_prediction_history():
+
+    db = SessionLocal()
+
+    try:
+
+        records = (
+            db.query(
+                PredictionHistory
+            )
+            .order_by(
+                PredictionHistory.id.desc()
+            )
+            .all()
+        )
+
+
+        result = []
+
+
+        for record in records:
+
+            result.append({
+
+                "id": record.id,
+
+                "age": record.age,
+
+                "sex": record.sex,
+
+                "chest_pain_type":
+                    record.chest_pain_type,
+
+                "resting_bp":
+                    record.resting_bp,
+
+                "cholesterol":
+                    record.cholesterol,
+
+                "fasting_bs":
+                    record.fasting_bs,
+
+                "resting_ecg":
+                    record.resting_ecg,
+
+                "max_hr":
+                    record.max_hr,
+
+                "exercise_angina":
+                    record.exercise_angina,
+
+                "oldpeak":
+                    record.oldpeak,
+
+                "st_slope":
+                    record.st_slope,
+
+                "prediction":
+                    record.prediction,
+
+                "created_at":
+                    record.created_at
+            })
+
+
+        return {
+
+            "status": "success",
+
+            "total_records":
+                len(result),
+
+            "data":
+                result
+        }
+
+
+    except Exception as e:
+
+        raise HTTPException(
+
+            status_code=500,
+
+            detail=(
+                "Could not retrieve history: "
+                + str(e)
+            )
+        )
+
+
+    finally:
+
+        db.close()
+
+
