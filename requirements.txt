@@ -3,3 +3,8 @@ pandas
 scikit-learn
 joblib
 numpy
+fastapi
+uvicorn
+pydantic
+sqlalchemy
+requests
